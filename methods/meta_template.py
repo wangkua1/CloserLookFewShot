@@ -6,6 +6,7 @@ import numpy as np
 import torch.nn.functional as F
 import utils
 from abc import abstractmethod
+from tqdm import tqdm
 
 class MetaTemplate(nn.Module):
     def __init__(self, model_func, n_way, n_support, change_way = True):
@@ -56,6 +57,8 @@ class MetaTemplate(nn.Module):
 
         avg_loss=0
         for i, (x,_ ) in enumerate(train_loader):
+            if x.size(0) == 1:
+                x = x[0]
             self.n_query = x.size(1) - self.n_support           
             if self.change_way:
                 self.n_way  = x.size(0)
@@ -63,7 +66,7 @@ class MetaTemplate(nn.Module):
             loss = self.set_forward_loss( x )
             loss.backward()
             optimizer.step()
-            avg_loss = avg_loss+loss.data[0]
+            avg_loss = avg_loss+loss.item()
 
             if i % print_freq==0:
                 #print(optimizer.state_dict()['param_groups'][0]['lr'])
@@ -75,7 +78,10 @@ class MetaTemplate(nn.Module):
         acc_all = []
         
         iter_num = len(test_loader) 
-        for i, (x,_) in enumerate(test_loader):
+        for i, (x, _) in tqdm(enumerate(test_loader), desc='test_loop'):
+            # import ipdb; ipdb.set_trace()
+            if x.shape[0] == 1:
+                x = x[0]
             self.n_query = x.size(1) - self.n_support
             if self.change_way:
                 self.n_way  = x.size(0)

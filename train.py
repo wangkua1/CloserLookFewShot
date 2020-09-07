@@ -10,41 +10,59 @@ import glob
 
 import configs
 import backbone
-from data.datamgr import SimpleDataManager, SetDataManager
-from methods.baselinetrain import BaselineTrain
-from methods.baselinefinetune import BaselineFinetune
+from data.datamgr import AttrDataManager, SimpleDataManager, SetDataManager, FFSDataManager
+from methods.baselinetrain import BaselineTrain, BaselineTrainTest
 from methods.protonet import ProtoNet
 from methods.matchingnet import MatchingNet
 from methods.relationnet import RelationNet
 from methods.maml import MAML
 from io_utils import model_dict, parse_args, get_resume_file  
-
-def train(base_loader, val_loader, model, optimization, start_epoch, stop_epoch, params):    
+import itertools
+import json
+def train(base_loader, eval_loaders_dic, model, optimization, start_epoch, stop_epoch, params):    
     if optimization == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters())
+        optimizer = torch.optim.Adam(model.parameters(),lr=params.lr)
     else:
        raise ValueError('Unknown optimization, please define by yourself')
 
     max_acc = 0       
 
     for epoch in range(start_epoch,stop_epoch):
-        model.train()
-        model.train_loop(epoch, base_loader,  optimizer ) #model are called by reference, no need to return 
-        model.eval()
 
+        acc_dict = {'epoch':epoch}
+        for k, val_loader in eval_loaders_dic.items():
+            acc = model.test_loop( val_loader)
+            print(f"{k} ACC: {acc}")
+            acc_dict[k] = acc
         if not os.path.isdir(params.checkpoint_dir):
             os.makedirs(params.checkpoint_dir)
+            
+        print('Logging to ======>')
+        print(params.checkpoint_dir)
 
-        acc = model.test_loop( val_loader)
+        if (epoch % params.save_freq==0) or (epoch==stop_epoch-1):
+            outfile = os.path.join(params.checkpoint_dir, '{:d}.tar'.format(epoch))
+            torch.save({'epoch':epoch, 'state':model.state_dict()}, outfile)
+        # Logging
+        # - flush first
+        if epoch == 0:
+            open(os.path.join(params.checkpoint_dir, 'acc.txt'), "w").close()
+        with open(os.path.join(params.checkpoint_dir, 'acc.txt'),'a') as f:
+            # f.write(f"{epoch}, {acc}, {max_acc}\n")
+            f.write(json.dumps(acc_dict))
+            f.write('\n')
+
         if acc > max_acc : #for baseline and baseline++, we don't use validation here so we let acc = -1
             print("best model! save...")
             max_acc = acc
             outfile = os.path.join(params.checkpoint_dir, 'best_model.tar')
             torch.save({'epoch':epoch, 'state':model.state_dict()}, outfile)
 
-        if (epoch % params.save_freq==0) or (epoch==stop_epoch-1):
-            outfile = os.path.join(params.checkpoint_dir, '{:d}.tar'.format(epoch))
-            torch.save({'epoch':epoch, 'state':model.state_dict()}, outfile)
+        model.train()
+        model.train_loop(epoch, base_loader,  optimizer ) #model are called by reference, no need to return 
+        model.eval()
+
+
 
     return model
 
@@ -94,36 +112,48 @@ if __name__=='__main__':
                 params.stop_epoch = 400
             else:
                 params.stop_epoch = 600 #default
+
+    eval_loaders_dic = {}
+    # FFS
+    test_ffs_params     = dict(n_way = 1, n_support = params.n_shot, n_episodes = 20)
+    for attr_split, example_split in itertools.product(['train', 'val', 'test'],['base','val','novel']):
+        val_loader = FFSDataManager(image_size, attr_split=attr_split, n_query = 15, **test_ffs_params).get_data_loader( configs.data_dir[params.dataset] + f'{example_split}.json' , aug = False) 
+        eval_loaders_dic[f"FFS,attr={attr_split},example={example_split}"] = val_loader
+    # FS
+    test_few_shot_params     = dict(n_way = params.test_n_way, n_support = params.n_shot, n_episodes = 20) 
+    for  example_split in ['base','val','novel']:
+        val_loader = SetDataManager(image_size, n_query = 15, **test_few_shot_params).get_data_loader( configs.data_dir[params.dataset] + f'{example_split}.json' , aug = False) 
+        eval_loaders_dic[f"FS,example={example_split}"] = val_loader
      
 
     if params.method in ['baseline', 'baseline++'] :
         base_datamgr    = SimpleDataManager(image_size, batch_size = 16)
         base_loader     = base_datamgr.get_data_loader( base_file , aug = params.train_aug )
-        val_datamgr     = SimpleDataManager(image_size, batch_size = 64)
-        val_loader      = val_datamgr.get_data_loader( val_file, aug = False)
-        
-        if params.dataset == 'omniglot':
-            assert params.num_classes >= 4112, 'class number need to be larger than max label id in base class'
-        if params.dataset == 'cross_char':
-            assert params.num_classes >= 1597, 'class number need to be larger than max label id in base class'
 
-        if params.method == 'baseline':
-            model           = BaselineTrain( model_dict[params.model], params.num_classes)
-        elif params.method == 'baseline++':
-            model           = BaselineTrain( model_dict[params.model], params.num_classes, loss_type = 'dist')
+        model  = BaselineTrainTest( model_dict[params.model], params.num_classes, params.test_n_way, params.n_shot, loss_type = 'softmax' if params.method == 'baseline' else 'dist')
+
+    elif params.method == 'attr':
+        base_datamgr    = AttrDataManager(image_size, params.train_attr_split, batch_size = 16)
+        base_loader     = base_datamgr.get_data_loader( base_file , aug = params.train_aug )
+        
+
+        model  = BaselineTrainTest( model_dict[params.model],params.num_classes,  params.test_n_way, params.n_shot, loss_type= 'bce')
 
     elif params.method in ['protonet','matchingnet','relationnet', 'relationnet_softmax', 'maml', 'maml_approx']:
         n_query = max(1, int(16* params.test_n_way/params.train_n_way)) #if test_n_way is smaller than train_n_way, reduce n_query to keep batch size small
- 
-        train_few_shot_params    = dict(n_way = params.train_n_way, n_support = params.n_shot) 
-        base_datamgr            = SetDataManager(image_size, n_query = n_query,  **train_few_shot_params)
-        base_loader             = base_datamgr.get_data_loader( base_file , aug = params.train_aug )
-         
-        test_few_shot_params     = dict(n_way = params.test_n_way, n_support = params.n_shot) 
-        val_datamgr             = SetDataManager(image_size, n_query = n_query, **test_few_shot_params)
-        val_loader              = val_datamgr.get_data_loader( val_file, aug = False) 
-        #a batch for SetDataManager: a [n_way, n_support + n_query, dim, w, h] tensor        
-
+        
+        if params.train_ffs:
+            train_ffs_params    = dict(n_way = 1, n_support = params.n_shot) 
+            base_datamgr            = FFSDataManager(image_size, attr_split='train', n_query = 15, **train_ffs_params)
+            base_loader             = base_datamgr.get_data_loader( base_file , aug = params.train_aug ) 
+            # For initialzing models below
+            assert params.train_n_way == 2
+            train_few_shot_params    = dict(n_way = params.train_n_way, n_support = params.n_shot) 
+        else:
+            train_few_shot_params    = dict(n_way = params.train_n_way, n_support = params.n_shot) 
+            base_datamgr            = SetDataManager(image_size, n_query = n_query,  **train_few_shot_params)
+            base_loader             = base_datamgr.get_data_loader( base_file , aug = params.train_aug )
+        
         if params.method == 'protonet':
             model           = ProtoNet( model_dict[params.model], **train_few_shot_params )
         elif params.method == 'matchingnet':
@@ -155,11 +185,12 @@ if __name__=='__main__':
 
     model = model.cuda()
 
-    params.checkpoint_dir = '%s/checkpoints/%s/%s_%s' %(configs.save_dir, params.dataset, params.model, params.method)
-    if params.train_aug:
-        params.checkpoint_dir += '_aug'
-    if not params.method  in ['baseline', 'baseline++']: 
-        params.checkpoint_dir += '_%dway_%dshot' %( params.train_n_way, params.n_shot)
+    if params.checkpoint_dir == '':
+        params.checkpoint_dir = '%s/checkpoints/%s/%s_%s' %(configs.save_dir, params.dataset, params.model, params.method)
+        if params.train_aug:
+            params.checkpoint_dir += '_aug'
+        if not params.method  in ['baseline', 'baseline++']: 
+            params.checkpoint_dir += '_%dway_%dshot' %( params.train_n_way, params.n_shot)
 
     if not os.path.isdir(params.checkpoint_dir):
         os.makedirs(params.checkpoint_dir)
@@ -194,4 +225,4 @@ if __name__=='__main__':
         else:
             raise ValueError('No warm_up file')
 
-    model = train(base_loader, val_loader,  model, optimization, start_epoch, stop_epoch, params)
+    model = train(base_loader, eval_loaders_dic,  model, optimization, start_epoch, stop_epoch, params)

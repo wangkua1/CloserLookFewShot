@@ -53,6 +53,8 @@ See test.json for reference
 ## Train
 Run
 ```python ./train.py --dataset [DATASETNAME] --model [BACKBONENAME] --method [METHODNAME] [--OPTIONARG]```
+python ./train.py --dataset CUB --model Conv4 --method baseline 
+python ./train.py --dataset CUB --model Conv4 --method protonet 
 
 For example, run `python ./train.py --dataset miniImagenet --model Conv4 --method baseline --train_aug`  
 Commands below follow this example, and please refer to io_utils.py for additional options.
@@ -61,10 +63,12 @@ Commands below follow this example, and please refer to io_utils.py for addition
 Save the extracted feature before the classifaction layer to increase test speed. This is not applicable to MAML, but are required for other methods.
 Run
 ```python ./save_features.py --dataset miniImagenet --model Conv4 --method baseline --train_aug```
+python ./save_features.py --dataset CUB --model Conv4 --method baseline 
 
 ## Test
 Run
 ```python ./test.py --dataset miniImagenet --model Conv4 --method baseline --train_aug```
+python ./test.py --dataset CUB --model Conv4 --method baseline
 
 ## Results
 * The test results will be recorded in `./record/results.txt`

@@ -21,6 +21,7 @@ from methods.matchingnet import MatchingNet
 from methods.relationnet import RelationNet
 from methods.maml import MAML
 from io_utils import model_dict, parse_args, get_resume_file, get_best_file , get_assigned_file
+from tqdm import tqdm
 
 def feature_evaluation(cl_data_file, model, n_way = 5, n_support = 5, n_query = 15, adaptation = False):
     class_list = cl_data_file.keys()
@@ -38,6 +39,7 @@ def feature_evaluation(cl_data_file, model, n_way = 5, n_support = 5, n_query = 
     if adaptation:
         scores  = model.set_forward_adaptation(z_all, is_feature = True)
     else:
+        # with torch.no_grad():
         scores  = model.set_forward(z_all, is_feature = True)
     pred = scores.data.cpu().numpy().argmax(axis = 1)
     y = np.repeat(range( n_way ), n_query )
@@ -49,7 +51,7 @@ if __name__ == '__main__':
 
     acc_all = []
 
-    iter_num = 600
+    iter_num = 60
 
     few_shot_params = dict(n_way = params.test_n_way , n_support = params.n_shot) 
 
@@ -122,7 +124,7 @@ if __name__ == '__main__':
         else:
             image_size = 224
 
-        datamgr         = SetDataManager(image_size, n_eposide = iter_num, n_query = 15 , **few_shot_params)
+        datamgr         = SetDataManager(image_size, n_episodes = iter_num, n_query = 15 , **few_shot_params)
         
         if params.dataset == 'cross':
             if split == 'base':
@@ -147,7 +149,8 @@ if __name__ == '__main__':
         novel_file = os.path.join( checkpoint_dir.replace("checkpoints","features"), split_str +".hdf5") #defaut split = novel, but you can also test base or val classes
         cl_data_file = feat_loader.init_loader(novel_file)
 
-        for i in range(iter_num):
+        for i in tqdm(range(iter_num),desc='eval loop'):
+            # import ipdb; ipdb.set_trace()
             acc = feature_evaluation(cl_data_file, model, n_query = 15, adaptation = params.adaptation, **few_shot_params)
             acc_all.append(acc)
 

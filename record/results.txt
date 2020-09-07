@@ -1,0 +1,1 @@
+Time: 20200902-200036, Setting: CUB-novel-Conv4-baseline 5shot 5way_test, Acc: 60 Test Acc = 54.89% +- 2.31% 

@@ -5,7 +5,7 @@ from PIL import Image
 import numpy as np
 import torchvision.transforms as transforms
 import data.additional_transforms as add_transforms
-from data.dataset import SimpleDataset, SetDataset, EpisodicBatchSampler
+from data.dataset import AttrDataset, SimpleDataset, SetDataset, EpisodicBatchSampler, FFSDataset
 from abc import abstractmethod
 
 class TransformLoader:
@@ -48,6 +48,21 @@ class DataManager:
         pass 
 
 
+class AttrDataManager(DataManager):
+    def __init__(self, image_size, attr_split, batch_size):        
+        super(AttrDataManager, self).__init__()
+        self.batch_size = batch_size
+        self.attr_split = attr_split
+        self.trans_loader = TransformLoader(image_size)
+
+    def get_data_loader(self, data_file, aug): #parameters that would change on train/val set
+        transform = self.trans_loader.get_composed_transform(aug)
+        dataset = AttrDataset(data_file, self.attr_split, transform)
+        data_loader_params = dict(batch_size = self.batch_size, shuffle = True, num_workers = 12, pin_memory = True)       
+        data_loader = torch.utils.data.DataLoader(dataset, **data_loader_params)
+
+        return data_loader
+
 class SimpleDataManager(DataManager):
     def __init__(self, image_size, batch_size):        
         super(SimpleDataManager, self).__init__()
@@ -63,20 +78,32 @@ class SimpleDataManager(DataManager):
         return data_loader
 
 class SetDataManager(DataManager):
-    def __init__(self, image_size, n_way, n_support, n_query, n_eposide =100):        
+    def __init__(self, image_size, n_way, n_support, n_query, n_episodes =100):        
         super(SetDataManager, self).__init__()
         self.image_size = image_size
         self.n_way = n_way
         self.batch_size = n_support + n_query
-        self.n_eposide = n_eposide
+        self.n_episodes = n_episodes
 
         self.trans_loader = TransformLoader(image_size)
 
     def get_data_loader(self, data_file, aug): #parameters that would change on train/val set
         transform = self.trans_loader.get_composed_transform(aug)
         dataset = SetDataset( data_file , self.batch_size, transform )
-        sampler = EpisodicBatchSampler(len(dataset), self.n_way, self.n_eposide )  
+        sampler = EpisodicBatchSampler(len(dataset), self.n_way, self.n_episodes )  
         data_loader_params = dict(batch_sampler = sampler,  num_workers = 12, pin_memory = True)       
+        data_loader = torch.utils.data.DataLoader(dataset, **data_loader_params)
+        return data_loader
+
+class FFSDataManager(SetDataManager):
+    def __init__(self, image_size, attr_split, n_way, n_support, n_query, n_episodes =100):        
+        super(FFSDataManager, self).__init__(image_size, n_way, n_support, n_query, n_episodes)
+        self.attr_split = attr_split 
+
+    def get_data_loader(self, data_file, aug): #parameters that would change on train/val set
+        transform = self.trans_loader.get_composed_transform(aug)
+        dataset = FFSDataset( data_file ,self.attr_split, self.batch_size, transform , self.n_episodes)
+        data_loader_params = dict(num_workers = 12, pin_memory = True)       
         data_loader = torch.utils.data.DataLoader(dataset, **data_loader_params)
         return data_loader
 
