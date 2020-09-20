@@ -8,13 +8,16 @@ import torchvision.transforms as transforms
 import os
 from collections import defaultdict
 import itertools
-identity = lambda x:x
+
+
+def identity(x):
+    return x
 
 
 
 
 class AttrDataset:
-    def __init__(self, data_file, attr_split, transform, target_transform=identity):
+    def __init__(self, data_file, attr_split, attr_split_file, transform, target_transform=identity):
         assert attr_split in ['train', 'all']
 
         with open(data_file, 'r') as f:
@@ -24,7 +27,7 @@ class AttrDataset:
 
         # 
         self.attr_mask = np.zeros((312,))
-        attr_split_dic = json.load(open(os.path.join(base_path,'attr_splits.json'),'r'))
+        attr_split_dic = json.load(open(os.path.join(base_path,f'{attr_split_file}.json'),'r'))
         if attr_split == 'train':
             considered_attrs = attr_split_dic[attr_split]
         elif attr_split ==  'all':
@@ -38,7 +41,9 @@ class AttrDataset:
                 self.attr_mask[n] = 1
 
         image_attribute_labels = open(os.path.join(base_path, 'attributes', 'image_attribute_labels.txt')).readlines()
-        image_id2attr_dic = defaultdict(lambda: np.zeros((312,)))
+        def f():
+            return np.zeros((312,))
+        image_id2attr_dic = defaultdict(f)
         for i in range(len(image_attribute_labels)):
             image_id, attr_id, val = image_attribute_labels[i].strip().split(' ')[:3]
             image_id2attr_dic[int(image_id)][int(attr_id)-1] = int(val)
@@ -91,7 +96,9 @@ class SimpleDataset:
         return len(self.meta['image_names'])
 
 class FFSDataset:
-    def __init__(self, data_file, attr_split, batch_size, transform, n_episodes):
+    def __init__(self, x_type, data_file, attr_split, attr_split_file, batch_size, transform, n_episodes):
+        assert x_type in ['img', 'attr']
+
         self.n_episodes = n_episodes
         with open(data_file, 'r') as f:
             self.meta = json.load(f)
@@ -110,12 +117,14 @@ class FFSDataset:
 
         # 
         attr_val_id_dic = defaultdict(list)
+        attr_id_name_val_dic = {}
         raw_attrs = open(os.path.join(base_path, 'attributes', 'attributes.txt')).readlines()
         for n, r in enumerate(raw_attrs):
             k,v = r.strip().split(' ')[1].split('::')
             attr_val_id_dic[k].append((v, n+1))
+            attr_id_name_val_dic[n+1] = (k, v)
 
-        attr_split_dic = json.load(open(os.path.join(base_path,'attr_splits.json'),'r'))
+        attr_split_dic = json.load(open(os.path.join(base_path,f'{attr_split_file}.json'),'r'))
         considered_attrs = attr_split_dic[attr_split]
 
         #
@@ -149,7 +158,8 @@ class FFSDataset:
                 # Filter for only ids in this split
                 ids = list(set(ids).intersection(set(split_ids)))
                 if len(ids) >= batch_size:
-                    all_ind_combi_str_to_example_ids_dic[ind_combi_str] = [
+                    k = ','.join(['::'.join(attr_id_name_val_dic[int(i)+1]) for i in ind_combi_str.split(',')])
+                    all_ind_combi_str_to_example_ids_dic[k] = [
                         os.path.join('filelists/CUB/CUB_200_2011/images/',image_id2path_dic[id]) for id in ids]
         #
         all_img_paths = []
@@ -158,17 +168,27 @@ class FFSDataset:
             all_img_paths.append(os.path.join('filelists/CUB/CUB_200_2011/images/',path))
 
         self.sub_meta = all_ind_combi_str_to_example_ids_dic
-        self.cl_list = list(self.sub_meta.keys())
+        self.cl_list = np.array(list(self.sub_meta.keys()))
+        idxs = np.random.permutation(len(self.cl_list))
+        self.cl_list = self.cl_list[idxs]
 
         self.sub_dataloader = [] 
         sub_data_loader_params = dict(batch_size = batch_size,
                                   shuffle = True,
                                   num_workers = 0, #use main thread only or may receive multiple batches
                                   pin_memory = False)        
+
+        #
+        if x_type == 'attr':
+            attrdset = AttrDataset(data_file, 'all', attr_split_file, transform)
         for cl in self.cl_list:
             neg = list(set(all_img_paths).difference(set(self.sub_meta[cl])))
-            sub_dataset = PairDataset(self.sub_meta[cl],neg, cl, transform = transform )
+            if x_type == 'attr':
+                self.sub_meta[cl] = [attrdset._path2attr(p) for p in self.sub_meta[cl]]
+                neg = [attrdset._path2attr(p) for p in neg]
+            sub_dataset = PairDataset(x_type, self.sub_meta[cl],neg, cl, transform = transform )
             self.sub_dataloader.append( torch.utils.data.DataLoader(sub_dataset, **sub_data_loader_params) )
+        assert len(self.sub_dataloader) > 0
 
     def __getitem__(self,i):
         pos, neg, y  = next(iter(self.sub_dataloader[i]))
@@ -176,10 +196,12 @@ class FFSDataset:
         return x, y
 
     def __len__(self):
-        return self.n_episodes
+        return min(self.n_episodes, len(self.sub_dataloader))
 
 class PairDataset:
-    def __init__(self, pos, neg, cl, transform=transforms.ToTensor(), target_transform=identity):
+    def __init__(self,x_type, pos, neg, cl, transform=transforms.ToTensor(), target_transform=identity):
+        self.x_type = x_type
+        assert self.x_type in ['img', 'attr']
         self.pos = pos
         self.neg = neg
         self.cl = cl 
@@ -187,11 +209,14 @@ class PairDataset:
         self.target_transform = target_transform
 
     def __getitem__(self,i):
-        #print( '%d -%d' %(self.cl,i))
-        pos_img = self.transform(Image.open(os.path.join( self.pos[i])).convert('RGB'))
-        neg_img = self.transform(Image.open(os.path.join( self.neg[i])).convert('RGB'))
+        if self.x_type == 'img':
+            pos = self.transform(Image.open(os.path.join( self.pos[i])).convert('RGB'))
+            neg = self.transform(Image.open(os.path.join( self.neg[i])).convert('RGB'))
+        if self.x_type == 'attr':
+            pos = torch.from_numpy(self.pos[i]).float()
+            neg = torch.from_numpy(self.neg[i]).float()
         target = self.target_transform(self.cl)
-        return pos_img, neg_img, target
+        return pos, neg, target
 
     def __len__(self):
         return min(len(self.pos), len(self.neg))

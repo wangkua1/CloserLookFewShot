@@ -19,9 +19,17 @@ from methods.maml import MAML
 from io_utils import model_dict, parse_args, get_resume_file  
 import itertools
 import json
+import torchvision.utils as vutils
+import matplotlib.pylab as plt
+from tqdm import tqdm
+
 def train(base_loader, eval_loaders_dic, model, optimization, start_epoch, stop_epoch, params):    
     if optimization == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters(),lr=params.lr)
+        parameters = list(model.parameters())
+        if len(parameters) == 0:
+            optimizer = None
+        else:
+            optimizer = torch.optim.Adam(parameters,lr=params.lr)
     else:
        raise ValueError('Unknown optimization, please define by yourself')
 
@@ -29,8 +37,33 @@ def train(base_loader, eval_loaders_dic, model, optimization, start_epoch, stop_
 
     for epoch in range(start_epoch,stop_epoch):
 
+        model.eval()
         acc_dict = {'epoch':epoch}
         for k, val_loader in eval_loaders_dic.items():
+            if params.db and k.startswith('FFS'):
+                D = os.path.join(params.checkpoint_dir, k)
+                if not os.path.isdir(D):
+                    os.makedirs(D)
+                for i, (x, y) in tqdm(enumerate(val_loader), desc='plotting'):
+                    if i >= 10:
+                        break
+                    def _plot(ims, title, name):
+                        c, h, w = ims.shape[-3:]
+                        grid = vutils.make_grid(ims.reshape(-1, c,h,w), nrow=ims.shape[1], padding=2, normalize=True) 
+                        fig,  axs = plt.subplots(1,1,figsize=(50,2))
+                        plt.imshow(np.transpose(grid.numpy(), (1,2,0)))
+                        plt.tight_layout()
+                        plt.grid()
+                        plt.xticks([])
+                        plt.yticks([])
+                        plt.title(title,fontsize=20)
+                        plt.savefig(name, bbox_inches='tight', pad_inches=0, format='jpeg')
+                        plt.close(fig)
+                    x = x[0]
+                    fname = os.path.join(D,f'{epoch}_{i}.jpeg')
+                    _plot(x, f'{y[0][0]}', fname)
+
+
             acc = model.test_loop( val_loader)
             print(f"{k} ACC: {acc}")
             acc_dict[k] = acc
@@ -59,8 +92,9 @@ def train(base_loader, eval_loaders_dic, model, optimization, start_epoch, stop_
             torch.save({'epoch':epoch, 'state':model.state_dict()}, outfile)
 
         model.train()
-        model.train_loop(epoch, base_loader,  optimizer ) #model are called by reference, no need to return 
-        model.eval()
+        if optimizer is not None:
+            model.train_loop(epoch, base_loader,  optimizer ) #model are called by reference, no need to return 
+        
 
 
 
@@ -116,14 +150,16 @@ if __name__=='__main__':
     eval_loaders_dic = {}
     # FFS
     test_ffs_params     = dict(n_way = 1, n_support = params.n_shot, n_episodes = 20)
+    # for attr_split, example_split in tqdm(itertools.product(['train', 'val', 'test'],['base']), desc='Loading Val Loaders'):
     for attr_split, example_split in itertools.product(['train', 'val', 'test'],['base','val','novel']):
-        val_loader = FFSDataManager(image_size, attr_split=attr_split, n_query = 15, **test_ffs_params).get_data_loader( configs.data_dir[params.dataset] + f'{example_split}.json' , aug = False) 
+        val_loader = FFSDataManager(params.x_type, image_size, attr_split=attr_split, attr_split_file=params.attr_split_file, n_query = 15, **test_ffs_params).get_data_loader( configs.data_dir[params.dataset] + f'{example_split}.json' , aug = False) 
         eval_loaders_dic[f"FFS,attr={attr_split},example={example_split}"] = val_loader
+        
     # FS
-    test_few_shot_params     = dict(n_way = params.test_n_way, n_support = params.n_shot, n_episodes = 20) 
-    for  example_split in ['base','val','novel']:
-        val_loader = SetDataManager(image_size, n_query = 15, **test_few_shot_params).get_data_loader( configs.data_dir[params.dataset] + f'{example_split}.json' , aug = False) 
-        eval_loaders_dic[f"FS,example={example_split}"] = val_loader
+    # test_few_shot_params     = dict(n_way = params.test_n_way, n_support = params.n_shot, n_episodes = 20) 
+    # for  example_split in ['base','val','novel']:
+    #     val_loader = SetDataManager(image_size, n_query = 15, **test_few_shot_params).get_data_loader( configs.data_dir[params.dataset] + f'{example_split}.json' , aug = False) 
+    #     eval_loaders_dic[f"FS,example={example_split}"] = val_loader
      
 
     if params.method in ['baseline', 'baseline++'] :
@@ -133,7 +169,7 @@ if __name__=='__main__':
         model  = BaselineTrainTest( model_dict[params.model], params.num_classes, params.test_n_way, params.n_shot, loss_type = 'softmax' if params.method == 'baseline' else 'dist')
 
     elif params.method == 'attr':
-        base_datamgr    = AttrDataManager(image_size, params.train_attr_split, batch_size = 16)
+        base_datamgr    = AttrDataManager(image_size, params.train_attr_split, attr_split_file=params.attr_split_file, batch_size = 16)
         base_loader     = base_datamgr.get_data_loader( base_file , aug = params.train_aug )
         
 
@@ -144,7 +180,7 @@ if __name__=='__main__':
         
         if params.train_ffs:
             train_ffs_params    = dict(n_way = 1, n_support = params.n_shot) 
-            base_datamgr            = FFSDataManager(image_size, attr_split='train', n_query = 15, **train_ffs_params)
+            base_datamgr            = FFSDataManager(params.x_type, image_size, attr_split='train',attr_split_file=params.attr_split_file,  n_query = 15, **train_ffs_params)
             base_loader             = base_datamgr.get_data_loader( base_file , aug = params.train_aug ) 
             # For initialzing models below
             assert params.train_n_way == 2

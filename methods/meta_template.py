@@ -78,7 +78,7 @@ class MetaTemplate(nn.Module):
         acc_all = []
         
         iter_num = len(test_loader) 
-        for i, (x, _) in tqdm(enumerate(test_loader), desc='test_loop'):
+        for i, (x, y) in tqdm(enumerate(test_loader), desc='test_loop'):
             # import ipdb; ipdb.set_trace()
             if x.shape[0] == 1:
                 x = x[0]

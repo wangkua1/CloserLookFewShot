@@ -5,6 +5,8 @@ import argparse
 import backbone
 
 model_dict = dict(
+            Identity = backbone.Identity,
+            FC = backbone.FC,
             Conv4 = backbone.Conv4,
             Conv4S = backbone.Conv4S,
             Conv6 = backbone.Conv6,
@@ -25,9 +27,12 @@ def parse_args(script):
     parser.add_argument('--n_shot'      , default=5, type=int,  help='number of labeled data in each class, same as n_support') #baseline and baseline++ only use this parameter in finetuning
     parser.add_argument('--train_aug'   , action='store_true',  help='perform data augmentation or not during training ') #still required for save_features.py and test.py to find the model path correctly
     parser.add_argument('--checkpoint_dir', type=str, default='')
+    parser.add_argument('--attr_split_file', default='attr_splits0')
 
     if script == 'train':
         parser.add_argument('--train_attr_split', default='train')
+        parser.add_argument('--x_type', type=str, default='img', choices=['img', 'attr'])
+        parser.add_argument('--db', type=int, default=0)
         parser.add_argument('--lr', type=float, default=1e-3)
         parser.add_argument('--num_classes' , default=200, type=int, help='total number of classes in softmax, only used in baseline') #make it larger than the maximum label value in base class
         parser.add_argument('--save_freq'   , default=50, type=int, help='Save frequency')
@@ -36,6 +41,9 @@ def parse_args(script):
         parser.add_argument('--resume'      , action='store_true', help='continue from previous trained model with largest epoch')
         parser.add_argument('--warmup'      , action='store_true', help='continue from baseline, neglected if resume is true') #never used in the paper
     elif script == 'save_features':
+        parser.add_argument('--split'       , default='novel', help='base/val/novel') #default novel, but you can also test base/val class accuracy if you want 
+        parser.add_argument('--save_iter', default=-1, type=int,help ='save feature from the model trained in x epoch, use the best model if x is -1')
+    elif script == 'eval':
         parser.add_argument('--split'       , default='novel', help='base/val/novel') #default novel, but you can also test base/val class accuracy if you want 
         parser.add_argument('--save_iter', default=-1, type=int,help ='save feature from the model trained in x epoch, use the best model if x is -1')
     elif script == 'test':

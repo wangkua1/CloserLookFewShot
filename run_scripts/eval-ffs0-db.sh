@@ -1,10 +1,7 @@
 
-# for method_name in attr-train attr-all baseline protonet protonet-ffs ; do
-# for model in Conv4 ResNet18; do
-
 for method_name in protonet-ffs ; do
-for model in  Identity; do
-for lr in 1e-3; do
+for model in Conv4; do
+for lr in 1e-3 ; do
 
 train_ffs=0
 train_attr_split=train
@@ -39,9 +36,8 @@ maml-ffs)
 ;; 
 esac
 
-cmd=" train.py \
-	--checkpoint_dir ${ROOT1}/ffs/CUB-ffs0-db1/${method_name}-${model}-${lr} \
-    --x_type attr \
+cmd=" eval.py \
+	--checkpoint_dir saves/checkpoints/CUB-ffs0/${method_name}-${model}-${lr} \
 	--dataset CUB \
 	--model ${model} \
 	--method ${method}  \
@@ -76,6 +72,3 @@ fi
 done
 done
 done
-
-# python ./train.py --dataset CUB --model Conv4 --method attr
-# python ./train.py --dataset CUB --model Conv4 --method protonet

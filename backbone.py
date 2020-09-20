@@ -371,6 +371,32 @@ class ResNet(nn.Module):
         out = self.trunk(x)
         return out
 
+class FC(nn.Module): 
+    def __init__(self):
+        super(FC,self).__init__()
+        self.trunk = nn.Sequential(
+                nn.Linear( 312, 1000),
+                nn.BatchNorm1d(1000),
+                nn.ReLU(True),
+                nn.Linear( 1000, 1000),
+                nn.BatchNorm1d(1000),
+                nn.ReLU(True),
+                nn.Linear( 1000, 256)
+            )
+        self.final_feat_dim = 256
+
+    def forward(self,x):
+        return self.trunk(x)
+
+class Identity(nn.Module): 
+    def __init__(self):
+        super(Identity,self).__init__()
+        self.final_feat_dim = 312
+
+    def forward(self,x):
+        return x
+
+
 def Conv4():
     return ConvNet(4)
 
